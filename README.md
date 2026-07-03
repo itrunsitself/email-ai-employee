@@ -2,7 +2,7 @@
 
 This is the **exact build** from the video — a free AI employee that reads your email while you sleep, classifies everything with a local AI model, pings your phone the moment something urgent lands, and hands you a morning digest with suggested replies already written.
 
-▶️ **Watch the build:** [VIDEO_URL]
+▶️ **Watch the build:** https://youtu.be/1SyQnggtIds
 
 Everything runs on your own machine: **n8n** for the automation, **Ollama** running `qwen2.5:3b-instruct` for the brain. No subscriptions, no API keys, and your mail content never leaves your computer.
 
