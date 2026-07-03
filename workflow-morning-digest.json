@@ -1,0 +1,130 @@
+{
+  "name": "Morning Digest",
+  "nodes": [
+    {
+      "id": "trig-sched-001",
+      "name": "Daily 10:00 UTC",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 10 * * *"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "cmd-read-01",
+      "name": "Read Agent Log",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "command": "cat /home/node/.n8n/agent_log.jsonl 2>/dev/null || true"
+      }
+    },
+    {
+      "id": "code-digest-01",
+      "name": "Build Digest",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "jsCode": "\nconst stdout = String($input.first().json.stdout || '');\nconst lines = stdout.split('\\n').map(l => l.trim()).filter(Boolean);\nconst entries = [];\nfor (const line of lines) { try { entries.push(JSON.parse(line)); } catch (e) {} }\nconst counts = { 'urgent': 0, 'reply-needed': 0, 'ignore': 0 };\nfor (const e of entries) { const c = e.category || 'reply-needed'; counts[c] = (counts[c] || 0) + 1; }\nlet text = 'MORNING DIGEST — ' + new Date().toISOString().slice(0, 10) + '\\n';\ntext += 'Processed ' + entries.length + ' emails: ' + (counts['urgent']||0) + ' urgent, ' + (counts['reply-needed']||0) + ' reply-needed, ' + (counts['ignore']||0) + ' ignored\\n\\n';\nif (entries.length === 0) text += 'No new emails processed since the last digest.';\nfor (const e of entries) {\n  text += '[' + String(e.category || '?').toUpperCase() + '] ' + (e.subject || '(no subject)') + ' — ' + (e.summary || '') + '\\n';\n  if (e.suggested_reply) text += '   > Suggested reply: ' + e.suggested_reply + '\\n';\n}\nif (text.length > 3900) text = text.slice(0, 3900) + '\\n...(truncated)';\nreturn [{ json: { digest: text, count: entries.length } }];\n"
+      }
+    },
+    {
+      "id": "tg-digest-01",
+      "name": "Telegram Digest",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {
+        "operation": "sendMessage",
+        "chatId": "YOUR_CHAT_ID",
+        "text": "={{ $json.digest }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "notes": "Attach your Telegram bot token credential here, and put your own chat ID in the 'Chat ID' field -- see guide-telegram-bot.md"
+    },
+    {
+      "id": "cmd-arch-01",
+      "name": "Archive Log",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [
+        880,
+        0
+      ],
+      "parameters": {
+        "command": "[ -f /home/node/.n8n/agent_log.jsonl ] && mv /home/node/.n8n/agent_log.jsonl \"/home/node/.n8n/agent_log.$(date +%Y%m%d_%H%M%S).processed\" || true"
+      }
+    }
+  ],
+  "connections": {
+    "Daily 10:00 UTC": {
+      "main": [
+        [
+          {
+            "node": "Read Agent Log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Agent Log": {
+      "main": [
+        [
+          {
+            "node": "Build Digest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Digest": {
+      "main": [
+        [
+          {
+            "node": "Telegram Digest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram Digest": {
+      "main": [
+        [
+          {
+            "node": "Archive Log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {}
+}

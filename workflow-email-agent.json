@@ -1,0 +1,175 @@
+{
+  "name": "Email Agent (real-time)",
+  "nodes": [
+    {
+      "id": "trig-imap-001",
+      "name": "Email Trigger (IMAP)",
+      "type": "n8n-nodes-base.emailReadImap",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "mailbox": "INBOX",
+        "postProcessAction": "read",
+        "format": "simple",
+        "options": {
+          "forceReconnect": 60
+        }
+      },
+      "notes": "Attach your IMAP credential here (host imap.gmail.com, port 993, SSL/TLS) -- see guide-gmail-app-password.md"
+    },
+    {
+      "id": "http-ollama-01",
+      "name": "Ollama Classify",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "http://172.17.0.1:11434/api/generate",
+        "sendBody": true,
+        "specifyBody": "json",
+        "contentType": "json",
+        "jsonBody": "={{ JSON.stringify({model: 'qwen2.5:3b-instruct', prompt: 'You are an email triage assistant. Classify the following email into exactly one category: \"urgent\" (time-sensitive, blocking, financial or critical issues), \"reply-needed\" (a human should respond soon), or \"ignore\" (newsletters, promotions, automated notifications). Respond with STRICT JSON only, exactly this shape: {\"category\": \"urgent|reply-needed|ignore\", \"summary\": \"one line summary\", \"suggested_reply\": \"2-3 sentence reply, or null if none needed\" }.\\n\\nFROM: ' + String($json.from || '') + '\\nSUBJECT: ' + String($json.subject || '') + '\\nBODY:\\n' + String($json.textPlain || $json.textHtml || '').slice(0, 3000), stream: false, format: 'json', options: {temperature: 0.2 } }) }}",
+        "options": {
+          "timeout": 180000
+        }
+      }
+    },
+    {
+      "id": "code-parse-01",
+      "name": "Parse & Validate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "\nlet parsed = {};\ntry { parsed = JSON.parse($json.response); } catch (e) { parsed = {}; }\nconst valid = ['urgent', 'reply-needed', 'ignore'];\nlet category = String(parsed.category || '').toLowerCase().trim();\nif (!valid.includes(category)) category = 'reply-needed';\nconst clean = s => String(s == null ? '' : s).replace(/[*_`\\[\\]]/g, '').replace(/\\s+/g, ' ').trim();\nconst email = $('Email Trigger (IMAP)').item.json;\nreturn { json: {\n  ts: new Date().toISOString(),\n  from: clean(email.from).slice(0, 200),\n  subject: clean(email.subject).slice(0, 300),\n  category,\n  summary: clean(parsed.summary).slice(0, 300),\n  suggested_reply: parsed.suggested_reply && String(parsed.suggested_reply).toLowerCase() !== 'null' ? clean(parsed.suggested_reply).slice(0, 600) : null\n}};\n"
+      }
+    },
+    {
+      "id": "cmd-log-01",
+      "name": "Append to Log",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [
+        660,
+        150
+      ],
+      "parameters": {
+        "command": "=echo \"{{ (JSON.stringify($json) + '\\n').base64Encode() }}\" | base64 -d >> /home/node/.n8n/agent_log.jsonl",
+        "executeOnce": false
+      }
+    },
+    {
+      "id": "if-urgent-01",
+      "name": "Is Urgent?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        880,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "leftValue": "={{ $json.category }}",
+              "rightValue": "urgent",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "tg-alert-01",
+      "name": "Telegram Urgent Alert",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1100,
+        -100
+      ],
+      "parameters": {
+        "operation": "sendMessage",
+        "chatId": "YOUR_CHAT_ID",
+        "text": "=🚨 Urgent email: {{ $json.summary }}\nFrom: {{ $json.from }}\nSubject: {{ $json.subject }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "notes": "Attach your Telegram bot token credential here, and put your own chat ID in the 'Chat ID' field -- see guide-telegram-bot.md"
+    }
+  ],
+  "connections": {
+    "Email Trigger (IMAP)": {
+      "main": [
+        [
+          {
+            "node": "Ollama Classify",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ollama Classify": {
+      "main": [
+        [
+          {
+            "node": "Parse & Validate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse & Validate": {
+      "main": [
+        [
+          {
+            "node": "Append to Log",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Is Urgent?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Urgent?": {
+      "main": [
+        [
+          {
+            "node": "Telegram Urgent Alert",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    }
+  },
+  "settings": {}
+}
